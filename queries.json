@@ -1,0 +1,384 @@
+[
+    {
+        "TITLE":"Најди ги сите бизниси кои се сеуште отворени",
+        "MONGODB":[
+                    {
+                        "$match": {
+                            "is_open": 1
+                        }
+                    }
+                ],
+        "MONGO_COLL": "business",       
+        "POSTGRESQL":"SELECT * FROM business WHERE is_open='true'",
+        "RESULTS" : {
+          "MONGODB" : 0.005,
+          "POSTGRESQL" : 0.168
+        }
+    },
+    {
+        "TITLE":"Најди ги id на сите бизниси кои што се со категорија 'Pets'",
+        "MONGODB":[
+                    {
+                        "$match": {
+                            "categories": { 
+                                "$regex": "Pets", 
+                                "$options": "i" 
+                            }
+                        }
+                    },
+                    {
+                        "$project": {
+                            "business_id": 1,
+                            "_id": 0
+                        }
+                    }
+                ],
+        "MONGO_COLL": "business",   
+        "POSTGRESQL":"SELECT business_id from business_category where category like '%Pets%'",
+        "RESULTS" : {
+          "MONGODB" : 0.016,
+          "POSTGRESQL" : 0.153
+        }
+    },
+    {
+        "TITLE":"За секој град пронајди ги трите најдобро оценети бизниси",
+        "MONGODB":[
+                    {
+                    "$group": {
+                        "_id": "$city",
+                        "topBusinesses": {
+                        "$push": {
+                            "business_id": "$business_id",
+                            "rating": "$rating"
+                        }
+                        }
+                    }
+                    },
+                    {
+                    "$addFields": {
+                        "topBusinesses": {
+                        "$slice": [
+                            {
+                            "$sortArray": {
+                                "input": "$topBusinesses",
+                                "sortBy": {
+                                "rating": -1
+                                }
+                            }
+                            },
+                            3
+                        ]
+                        }
+                    }
+                    },
+                    {
+                    "$project": {
+                        "_id": 0,
+                        "city": "$_id",
+                        "topBusinesses": 1
+                    }
+                    }
+                ],
+        "MONGO_COLL": "business",        
+        "POSTGRESQL":"with cte as (select city, business_id, stars, rank() over(partition by city order by stars desc) as \"rank\" from business b join \"location\" l on b.location_id = l.location_id join geo_area g on l.geo_id = g.id) select * from cte where \"rank\" <= 3",
+        "RESULTS" : {
+          "MONGODB" : 1.102,
+          "POSTGRESQL" : 0.9
+        }
+    },
+    {
+        "TITLE":"Најди просек од рецензии за секој бизнис",
+        "MONGODB":[
+                    {
+                    "$group": {
+                        "_id": "$business_id", 
+                        "average_rating": { "$avg": "$stars"},
+                        "total_reviews": { "$sum": 1} 
+                    }
+                    }
+                ],
+        "MONGO_COLL": "reviews",        
+        "POSTGRESQL":"SELECT business_id, avg(stars) as avg_stars FROM review group by business_id",
+        "RESULTS" : {
+          "MONGODB" : 15.767,
+          "POSTGRESQL" : 12.706
+        }
+    },
+    {
+        "TITLE":"Најди ги сите корисници со повеќе од 3 пријатели и барем една рецензија од 5 ѕвезди",
+        "MONGODB":[
+                    {
+                    "$project": {
+                        "_id": 0,
+                        "user_id": 1,
+                        "friends": 1
+                    }
+                    },
+                    {
+                    "$addFields": {
+                        "friends_array": {
+                        "$split": ["$friends", ", "]
+                        }
+                    }
+                    },
+                    {
+                    "$addFields": {
+                        "has_more_than_3_friends": {
+                        "$gt": [
+                            {
+                            "$size": "$friends_array"
+                            },
+                            3
+                        ]
+                        }
+                    }
+                    },
+                    {
+                    "$match": {
+                        "has_more_than_3_friends": true
+                    }
+                    },
+                    {
+                    "$lookup": {
+                        "from": "reviews",
+                        "localField": "user_id",
+                        "foreignField": "user_id",
+                        "as": "user_reviews"
+                    }
+                    },
+                    {
+                    "$addFields": {
+                        "has_5_star_review": {
+                        "$gt": [
+                            {
+                            "$size": {
+                                "$filter": {
+                                "input": "$user_reviews",
+                                "as": "review",
+                                "cond": {
+                                    "$eq": ["$$review.stars", 5]
+                                }
+                                }
+                            }
+                            },
+                            0
+                        ]
+                        }
+                    }
+                    },
+                    {
+                    "$match": {
+                        "has_5_star_review": true
+                    }
+                    },
+                    {
+                    "$project": {
+                        "_id": 0,
+                        "user_id": 1
+                    }
+                    }
+                ],
+        "MONGO_COLL": "users",      
+        "POSTGRESQL":"with user_gt as (select distinct u.user_id from \"user\" u join friendship f on u.user_id = friend_id1 or u.user_id = friend_id2 group by u.user_id having count(*) > 3) SELECT u.user_id from user_gt u join review r on u.user_id = r.user_id and r.stars = 5 group by u.user_id having count(*) > 0;",
+        "RESULTS" : {
+          "MONGODB" : 2709.189,
+          "POSTGRESQL" : 223.620
+        }
+    },
+    {
+        "TITLE":"За секој град, најди го бројот на бизниси во него, вкупниот број на рецензии како и просечниот број на ѕвезди од рецензии за бизнисите во тој град",
+        "MONGODB":[
+            {
+              "$lookup": {
+                "from": "reviews",
+                "localField": "business_id",
+                "foreignField": "business_id",
+                "as": "business_reviews"
+              }
+            },
+            {
+              "$group": {
+                "_id": "$city",
+                "total_businesses": {
+                  "$sum": 1
+                },
+                "total_review_count": {
+                  "$sum": {
+                    "$size": "$business_reviews"
+                  }
+                },
+                "average_rating": {
+                  "$avg": {
+                    "$avg": "$business_reviews.stars"
+                  }
+                } 
+              }
+            },
+            {
+                  "$project": {
+                      "city_id": "$_id",
+                      "_id": 0, 
+                      "total_businesses": 1,
+                      "total_review_count": 1,
+                      "average_rating": 1
+                  }
+            }
+            
+          ],
+        "MONGO_COLL": "business",
+        "POSTGRESQL":"SELECT g.city, count(distinct b.business_id) as num_businesses, count(*) as num_reviews, avg(r.stars) as avg_rating from business b join \"location\" l on b.location_id = l.location_id join geo_area g on l.geo_id = g.id join review r on b.business_id = r.business_id group by g.city;",
+        "RESULTS" : {
+          "MONGODB" : 6138.526,
+          "POSTGRESQL" : 46.319
+        }
+    },
+    {
+        "TITLE":"За бизнисите базирани во Santa Barbara, најди го просечниот број на ѕвезди од рецензии од корисници кои имаат оставено над 50 рецензии, резултатите подреди ги во опаѓачки редослед според просечниот број на ѕвезди",
+        "MONGODB":[
+            {
+              "$match": {
+                "city": "Santa Barbara"
+              }
+            },
+            {
+              "$lookup": {
+                "from": "reviews",
+                "localField": "business_id",
+                "foreignField": "business_id",
+                "as": "business_reviews"
+              }
+            },
+            {
+              "$unwind": "$business_reviews"
+            },
+            {
+              "$lookup": {
+                "from": "users",
+                "localField": "business_reviews.user_id",
+                "foreignField": "user_id",
+                "as": "user_details"
+              }
+            },
+            {
+              "$unwind": "$user_details"
+            },
+            {
+              "$match": {
+                "user_details.review_count": {
+                  "$gt": 50
+                }
+              }
+            },
+            {
+              "$group": {
+                "_id": "$business_id",
+                "average_rating": {
+                  "$avg": "$business_reviews.stars"
+                }
+              }
+            },
+            {
+              "$sort": {
+                "average_rating": -1
+              }
+            }
+          ],
+        "MONGO_COLL": "business",  
+        "POSTGRESQL":"WITH businesses as (SELECT * FROM business b join \"location\" l on b.location_id = l.location_id join geo_area g on l.geo_id = g.id and g.city = 'Santa Barbara'), business_reviews as (select b.business_id, r.stars from businesses b join review r on b.business_id = r.business_id join \"user\" u on r.user_id = u.user_id and u.review_count > 50) select business_id, avg(stars) as avg_stars from business_reviews group by business_id order by avg_stars desc",
+        "RESULTS" : {
+          "MONGODB" : 3791.217,
+          "POSTGRESQL" : 25.675
+        }
+    },
+    {
+        "TITLE":"Најди ги заедничките пријатели на двајца корисници",
+        "MONGODB":[
+                    {
+                    "$match": {
+                        "user_id": {
+                        "$in": [
+                            "DkQU5ThSEikbxwRH1ENlZQ",
+                            "Asv9K55XzW6iTMasGoMoZg"
+                        ]
+                        }
+                    } 
+                    },
+                    {
+                    "$addFields": {
+                        "friends_array": {
+                        "$split": ["$friends", ", "]
+                        } 
+                    }
+                    },
+                    {
+                    "$project": {
+                        "_id": 0,
+                        "user_id": 1,
+                        "friends_array": 1
+                    }
+                    },
+                    {
+                    "$facet": {
+                        "user1_data": [
+                        {
+                            "$match": {
+                            "user_id": "DkQU5ThSEikbxwRH1ENlZQ"
+                            }
+                        },
+                        {
+                            "$project": {
+                            "friends_user1": "$friends_array"
+                            }
+                        }
+                        ],
+                        "user2_data": [
+                        {
+                            "$match": {
+                            "user_id": "Asv9K55XzW6iTMasGoMoZg"
+                            }
+                        },
+                        {
+                            "$project": {
+                            "friends_user2": "$friends_array"
+                            }
+                        }
+                        ]
+                    }
+                    },
+                    {
+                    "$project": {
+                        "mutual_friends": {
+                        "$let": {
+                            "vars": {
+                            "user1_friends": {
+                                "$arrayElemAt": [
+                                "$user1_data.friends_user1",
+                                0
+                                ]
+                            },
+                            "user2_friends": {
+                                "$arrayElemAt": [
+                                "$user2_data.friends_user2",
+                                0
+                                ]
+                            }
+                            },
+                            "in": {
+                            "$setIntersection": [
+                                "$$user1_friends",
+                                "$$user2_friends"
+                            ]
+                            }
+                        }
+                        }
+                    }
+                    }
+                ],  
+        "MONGO_COLL": "users",         
+        "POSTGRESQL":"with cte1 as (SELECT friend_id2 as friend from friendship where friend_id1 = 'DkQU5ThSEikbxwRH1ENlZQ' UNION SELECT friend_id1 as friend from friendship where friend_id2 = 'DkQU5ThSEikbxwRH1ENlZQ'), cte2 as ( SELECT friend_id2 as friend from friendship where friend_id1 = 'Asv9K55XzW6iTMasGoMoZg' UNION SELECT friend_id1 as friend from friendship where friend_id2 = 'Asv9K55XzW6iTMasGoMoZg') select cte1.friend from cte1 join cte2 on cte1.friend = cte2.friend",
+        "RESULTS" : {
+          "MONGODB" : 13.168,
+          "POSTGRESQL" : 2.966
+        }
+    }
+]
